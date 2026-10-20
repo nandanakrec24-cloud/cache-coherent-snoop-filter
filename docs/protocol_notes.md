@@ -2,7 +2,7 @@
 
 ## MESI states
 
-- **M — Modified:** this cache has the only valid copy and it is dirty relative to memory.
+- **M — Modified:** this cache has the only valid copy and it is directly relative to memory.
 - **E — Exclusive:** this cache has the only valid copy and it matches memory.
 - **S — Shared:** multiple caches may hold clean copies.
 - **I — Invalid:** this cache does not hold a valid copy.
