@@ -1,0 +1,411 @@
+$date
+	Sun Oct 25 12:48:34 2026
+$end
+$version
+	Icarus Verilog
+$end
+$timescale
+	1ps
+$end
+$scope module tb_snoop_filter $end
+$var wire 1 ! snoop_required $end
+$var wire 1 " filter_hit $end
+$var parameter 32 # FILTER_ENTRIES $end
+$var reg 1 $ clear_all $end
+$var reg 1 % clk $end
+$var reg 1 & insert_absent $end
+$var reg 16 ' insert_addr [15:0] $end
+$var reg 16 ( query_addr [15:0] $end
+$var reg 16 ) remove_addr [15:0] $end
+$var reg 1 * remove_addr_valid $end
+$var reg 1 + rst_n $end
+$var integer 32 , errors [31:0] $end
+$var integer 32 - k [31:0] $end
+$scope module dut $end
+$var wire 1 $ clear_all $end
+$var wire 1 % clk $end
+$var wire 1 & insert_absent $end
+$var wire 16 . insert_addr [15:0] $end
+$var wire 16 / query_addr [15:0] $end
+$var wire 16 0 remove_addr [15:0] $end
+$var wire 1 * remove_addr_valid $end
+$var wire 1 + rst_n $end
+$var wire 1 ! snoop_required $end
+$var wire 1 " filter_hit $end
+$var parameter 32 1 ADDR_WIDTH $end
+$var parameter 32 2 FILTER_ENTRIES $end
+$scope begin g_filter $end
+$var reg 1 " hit_comb $end
+$var integer 32 3 duplicate_found [31:0] $end
+$var integer 32 4 free_found [31:0] $end
+$var integer 32 5 free_index [31:0] $end
+$var integer 32 6 lookup_i [31:0] $end
+$var integer 32 7 replace_ptr [31:0] $end
+$var integer 32 8 seq_i [31:0] $end
+$upscope $end
+$upscope $end
+$scope task check_lookup $end
+$var reg 16 9 addr [15:0] $end
+$var reg 1 : expected_hit $end
+$upscope $end
+$scope task do_clear $end
+$upscope $end
+$scope task do_insert $end
+$var reg 16 ; addr [15:0] $end
+$upscope $end
+$scope task do_remove $end
+$var reg 16 < addr [15:0] $end
+$upscope $end
+$upscope $end
+$enddefinitions $end
+$comment Show the parameter values. $end
+$dumpall
+b100 2
+b10000 1
+b100 #
+$end
+#0
+$dumpvars
+bx <
+bx ;
+x:
+bx 9
+bx 8
+bx 7
+bx 6
+bx 5
+bx 4
+bx 3
+b0 0
+b0 /
+b0 .
+bx -
+b0 ,
+0+
+0*
+b0 )
+b0 (
+b0 '
+0&
+0%
+0$
+x"
+x!
+$end
+#5000
+1!
+b100 6
+0"
+b0 7
+b100 8
+1%
+#10000
+0%
+#15000
+b100 8
+1%
+#20000
+1+
+0%
+#21000
+b100 6
+b10000 (
+b10000 /
+0:
+b10000 9
+#22000
+b10000 ;
+#25000
+1%
+#30000
+1&
+b10000 '
+b10000 .
+0%
+#35000
+0!
+1"
+b100 6
+b100 8
+b0 5
+b1 4
+b0 3
+1%
+#40000
+1:
+0&
+0%
+#41000
+1!
+b100 6
+0"
+b10001 (
+b10001 /
+0:
+b10001 9
+#45000
+1%
+#50000
+1&
+0%
+#55000
+b1 5
+b1 3
+b100 8
+b1 4
+1%
+#60000
+0!
+1"
+b100 6
+b10000 (
+b10000 /
+1:
+b10000 9
+0&
+0%
+#61000
+b10000 <
+#65000
+1%
+#70000
+1*
+b10000 )
+b10000 0
+0%
+#75000
+1!
+b100 6
+0"
+b100 8
+1%
+#80000
+0:
+0*
+0%
+#81000
+b11111111 <
+#85000
+1%
+#90000
+1*
+b11111111 )
+b11111111 0
+0%
+#95000
+b100 8
+1%
+#100000
+0*
+0%
+#105000
+1%
+#110000
+1$
+0%
+#115000
+b100 8
+1%
+#120000
+b100000000 ;
+b0 -
+0$
+0%
+#125000
+1%
+#130000
+1&
+b100000000 '
+b100000000 .
+0%
+#135000
+b100 6
+b100 8
+b0 5
+b1 4
+b0 3
+1%
+#140000
+b100000001 ;
+b1 -
+0&
+0%
+#145000
+1%
+#150000
+1&
+b100000001 '
+b100000001 .
+0%
+#155000
+b100 6
+b1 5
+b100 8
+b1 4
+1%
+#160000
+b100000010 ;
+b10 -
+0&
+0%
+#165000
+1%
+#170000
+1&
+b100000010 '
+b100000010 .
+0%
+#175000
+b100 6
+b100 8
+b10 5
+b1 4
+1%
+#180000
+b100000011 ;
+b11 -
+0&
+0%
+#185000
+1%
+#190000
+1&
+b100000011 '
+b100000011 .
+0%
+#195000
+b100 6
+b100 8
+b11 5
+b1 4
+1%
+#200000
+0!
+1"
+b100 6
+b100000000 (
+b100000000 /
+1:
+b100000000 9
+b0 -
+0&
+0%
+#201000
+b100 6
+1"
+b100000001 (
+b100000001 /
+b100000001 9
+b1 -
+#202000
+b100 6
+1"
+b100000010 (
+b100000010 /
+b100000010 9
+b10 -
+#203000
+b100 6
+1"
+b100000011 (
+b100000011 /
+b100000011 9
+b11 -
+#204000
+b1000000000 ;
+b100 -
+#205000
+1%
+#210000
+1&
+b1000000000 '
+b1000000000 .
+0%
+#215000
+b100 6
+1"
+b1 7
+b100 8
+b0 5
+b0 4
+1%
+#220000
+b100 6
+1"
+b1000000000 (
+b1000000000 /
+b1000000000 9
+0&
+0%
+#221000
+1!
+b100 6
+0"
+b100000000 (
+b100000000 /
+0:
+b100000000 9
+#222000
+0!
+1"
+b100 6
+b100000001 (
+b100000001 /
+1:
+b100000001 9
+b1 -
+#223000
+b100 6
+1"
+b100000010 (
+b100000010 /
+b100000010 9
+b10 -
+#224000
+b100 6
+1"
+b100000011 (
+b100000011 /
+b100000011 9
+b11 -
+#225000
+b100 -
+1%
+#230000
+1$
+0%
+#235000
+1!
+b100 6
+0"
+b0 7
+b100 8
+1%
+#240000
+b100 6
+b1000000000 (
+b1000000000 /
+0:
+b1000000000 9
+0$
+0%
+#241000
+b100 6
+b100000001 (
+b100000001 /
+b100000001 9
+b1 -
+#242000
+b100 6
+b100000010 (
+b100000010 /
+b100000010 9
+b10 -
+#243000
+b100 6
+b100000011 (
+b100000011 /
+b100000011 9
+b11 -
+#244000
+b100 -
