@@ -65,3 +65,27 @@ Do not code against these planned interfaces until the team freezes their port l
 - The selected request's address, command, and write data must remain consistent while the transaction is waiting for acceptance.
 - The response must be routed back to the core that initiated the accepted transaction. Only one outstanding transaction is assumed in this initial proposal.
 - Address width, data width, command encodings, response timing, and exact handshake rules must be agreed with the L1 cache, MESI controller, and memory-model owners before the interface is frozen.
+
+
+## `main_memory_model` — proposed interface
+
+| Signal | Direction | Meaning |
+|---|---|---|
+| `clk` | input | Rising-edge clock. |
+| `rst_n` | input | Active-low asynchronous reset. |
+| `mem_req_valid` | input | Indicates that the bus is presenting a memory request. |
+| `mem_req_addr` | input | Address for the memory operation. |
+| `mem_req_cmd` | input | Command specifying the operation; encoding to be agreed with the team. |
+| `mem_req_wdata` | input | Data to be written for a write operation. |
+| `mem_req_ready` | output | Indicates that the memory model can accept a request. |
+| `mem_resp_valid` | output | Indicates that a response is available. |
+| `mem_resp_rdata` | output | Read data returned for a read operation. |
+
+**Behaviour notes (proposed; pending team review):**
+
+- The memory model provides simple backing storage for the shared bus.
+- A request is accepted when `mem_req_valid` and `mem_req_ready` are both high at the active clock edge.
+- For a write command, the model stores `mem_req_wdata` at the requested address.
+- For a read command, the model returns the stored data for the requested address through `mem_resp_rdata` and asserts `mem_resp_valid` when the response is available.
+- The initial model supports one accepted request at a time; request acceptance and response timing must be defined consistently with the shared bus.
+- Storage organization, address and data widths, command encodings, reset behaviour of the stored memory, and read-response latency must be agreed before the interface is frozen.
