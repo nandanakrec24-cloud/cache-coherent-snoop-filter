@@ -41,6 +41,25 @@ module tb_mesi_controller;
 
     integer errors = 0;
     integer cycles;
+    integer mem_write_accept_count = 0;
+    integer mem_read_accept_count = 0;
+    integer c0_fill_count = 0;
+    integer c1_fill_count = 0;
+    integer writes_before;
+    integer reads_before;
+    integer fills_before;
+    integer j;
+
+    always @(posedge clk) begin
+        if (rst_n) begin
+            if (mem_req_valid && mem_req_ready && mem_req_write)
+                mem_write_accept_count <= mem_write_accept_count + 1;
+            if (mem_req_valid && mem_req_ready && !mem_req_write)
+                mem_read_accept_count <= mem_read_accept_count + 1;
+            if (c0_fill_valid) c0_fill_count <= c0_fill_count + 1;
+            if (c1_fill_valid) c1_fill_count <= c1_fill_count + 1;
+        end
+    end
 
     mesi_controller dut (
         .clk(clk), .rst_n(rst_n),
@@ -66,7 +85,7 @@ module tb_mesi_controller;
     );
 
     task check;
-        input [255:0] label;
+        input [1023:0] label;
         input condition;
         begin
             if (condition !== 1'b1) begin
@@ -94,6 +113,37 @@ module tb_mesi_controller;
         end
     endtask
 
+    task test_clean_peer_read;
+        input [1:0] peer_state;
+        input [15:0] addr;
+        integer accepted_writes;
+        begin
+            @(negedge clk);
+            filter_hit = 0;
+            c1_snoop_hit = 1;
+            c1_snoop_state = peer_state;
+            c0_miss_addr = addr;
+            c0_miss_type = `MISS_READ;
+            c0_miss_valid = 1;
+            accepted_writes = mem_write_accept_count;
+
+            @(negedge clk);
+            c0_miss_valid = 0;
+            wait (c1_snoop_valid);
+            check("clean peer READ snoop does not invalidate", !c1_snoop_invalidate);
+            @(posedge clk); #1;
+            check("clean peer READ uses memory read", mem_req_valid && !mem_req_write && mem_req_addr == addr);
+            @(posedge clk); #1;
+            @(negedge clk); mem_resp_rdata = 32'hBEEF0000 | addr; mem_resp_valid = 1;
+            @(posedge clk); #1;
+            check("clean peer READ fills Shared", c0_fill_valid && c0_fill_state == `MESI_S);
+            check("clean peer READ data comes from memory", c0_fill_data == (32'hBEEF0000 | addr));
+            check("clean peer READ does not write memory", mem_write_accept_count == accepted_writes);
+            @(negedge clk); mem_resp_valid = 0; c1_snoop_hit = 0; c1_snoop_state = `MESI_I;
+            @(posedge clk); #1;
+        end
+    endtask
+
     initial begin
         $dumpfile("build/mesi_controller.vcd");
         $dumpvars(0, tb_mesi_controller);
@@ -106,13 +156,25 @@ module tb_mesi_controller;
         c0_miss_addr = 16'h0010;
         c0_miss_type = `MISS_READ;
         c0_miss_valid = 1;
+        mem_req_ready = 0;
+        reads_before = mem_read_accept_count;
         #1;
         check("filter query follows selected address", filter_query_addr == 16'h0010);
         check("accepted miss removes stale negative entry", filter_remove_valid && filter_remove_addr == 16'h0010);
         @(negedge clk); c0_miss_valid = 0;
         wait (mem_req_valid);
-        check("read command is not write", mem_req_write == 0);
-        check("memory address is requested address", mem_req_addr == 16'h0010);
+        check("read command is held valid under backpressure", mem_req_valid && !mem_req_write);
+        check("memory read address is requested address", mem_req_addr == 16'h0010);
+        for (j = 0; j < 3; j = j + 1) begin
+            @(posedge clk); #1;
+            check("memory read request remains valid while stalled", mem_req_valid && !mem_req_write);
+            check("memory read address remains stable", mem_req_addr == 16'h0010);
+            check("memory read does not fill before acceptance", !c0_fill_valid);
+        end
+        @(negedge clk); mem_req_ready = 1;
+        @(posedge clk); #1;
+        check("memory read is accepted exactly once", mem_read_accept_count == reads_before + 1);
+        check("memory read request drops after acceptance", !mem_req_valid);
         @(negedge clk); mem_resp_rdata = 32'hA5A50010; mem_resp_valid = 1;
         @(negedge clk); mem_resp_valid = 0;
         wait_fill0;
@@ -136,7 +198,50 @@ module tb_mesi_controller;
         check("RDX grants M", c1_fill_state == `MESI_M);
         @(negedge clk); c0_snoop_hit = 0; c0_snoop_state = `MESI_I;
 
-        // Test 3: dirty writeback is forwarded and acknowledged after acceptance.
+        // Test 3: READ of peer M invalidates it, writes dirty data once, and
+        // withholds the Shared fill until memory accepts the write.
+        @(negedge clk);
+        c0_snoop_hit = 1;
+        c0_snoop_state = `MESI_M;
+        c0_snoop_data = 32'hD1A7CAFE;
+        c1_miss_addr = 16'h0028;
+        c1_miss_type = `MISS_READ;
+        c1_miss_valid = 1;
+        mem_req_ready = 0;
+        writes_before = mem_write_accept_count;
+        fills_before = c1_fill_count;
+        @(negedge clk); c1_miss_valid = 0;
+        wait (c0_snoop_valid);
+        check("READ snoop invalidates peer M", c0_snoop_invalidate);
+        check("READ does not invalidate requester", !c1_snoop_invalidate);
+        wait (mem_req_valid);
+        check("dirty READ issues memory write", mem_req_write && mem_req_addr == 16'h0028 && mem_req_wdata == 32'hD1A7CAFE);
+        check("dirty READ does not fill before write acceptance", !c1_fill_valid);
+        for (j = 0; j < 3; j = j + 1) begin
+            @(posedge clk); #1;
+            check("dirty write remains valid under backpressure", mem_req_valid && mem_req_write);
+            check("dirty write address stays stable", mem_req_addr == 16'h0028);
+            check("dirty write data stays stable", mem_req_wdata == 32'hD1A7CAFE);
+            check("dirty READ remains unfilled under backpressure", !c1_fill_valid);
+        end
+        @(negedge clk); mem_req_ready = 1;
+        @(posedge clk); #1;
+        check("dirty write accepted exactly once", mem_write_accept_count == writes_before + 1);
+        check("dirty READ fills after write acceptance", c1_fill_valid);
+        check("dirty READ fill carries snooped data", c1_fill_data == 32'hD1A7CAFE);
+        check("dirty READ fill state is Shared", c1_fill_state == `MESI_S);
+        @(posedge clk); #1;
+        check("dirty READ produces exactly one fill", c1_fill_count == fills_before + 1);
+        check("dirty READ does not repeat memory write", mem_write_accept_count == writes_before + 1);
+        check("dirty READ fill pulse ends", !c1_fill_valid);
+        @(negedge clk); c0_snoop_hit = 0; c0_snoop_state = `MESI_I;
+
+        // READs from clean peer S and E still use memory and grant Shared,
+        // without issuing a memory write or invalidating the peer.
+        test_clean_peer_read(`MESI_S, 16'h0030);
+        test_clean_peer_read(`MESI_E, 16'h0034);
+
+        // Test 4: dirty writeback is forwarded and acknowledged after acceptance.
         @(negedge clk);
         c0_wb_valid = 1; c0_wb_addr = 16'h0038; c0_wb_data = 32'hCAFEBABE;
         wait (mem_req_valid);
@@ -146,7 +251,7 @@ module tb_mesi_controller;
         wait (c0_wb_ack);
         @(negedge clk); c0_wb_valid = 0;
 
-        // Test 4: externally proven absent event is passed to the filter.
+        // Test 5: externally proven absent event is passed to the filter.
         known_absent_insert_valid = 1;
         known_absent_insert_addr = 16'h0044;
         #1;

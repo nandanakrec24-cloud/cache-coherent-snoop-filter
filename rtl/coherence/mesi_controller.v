@@ -85,7 +85,8 @@ module mesi_controller #(
                      ST_MEM_WAIT = 4'd3,
                      ST_FILL     = 4'd4,
                      ST_WB_REQ   = 4'd5,
-                     ST_WB_ACK   = 4'd6;
+                     ST_WB_ACK   = 4'd6,
+                     ST_SNOOP_WB_REQ = 4'd7;
 
     reg [3:0] state;
     reg       owner;             // 0 -> cache 0, 1 -> cache 1
@@ -153,6 +154,14 @@ module mesi_controller #(
 
         case (state)
             ST_SNOOP: begin
+                // A READ of a peer's Modified line must invalidate that peer
+                // while its dirty data is written back before Shared is granted.
+                if (txn_type == `MISS_READ &&
+                    (owner == 1'b0 ? (c1_snoop_hit && c1_snoop_state == `MESI_M) :
+                                     (c0_snoop_hit && c0_snoop_state == `MESI_M))) begin
+                    if (owner == 1'b0) c1_snoop_invalidate = 1'b1;
+                    else               c0_snoop_invalidate = 1'b1;
+                end
                 if (owner == 1'b0) c1_snoop_valid = need_snoop;
                 else               c0_snoop_valid = need_snoop;
             end
@@ -170,6 +179,12 @@ module mesi_controller #(
                 mem_req_write = `MEM_WRITE;
                 mem_req_addr  = wb_addr_reg;
                 mem_req_wdata = wb_data_reg;
+            end
+            ST_SNOOP_WB_REQ: begin
+                mem_req_valid = 1'b1;
+                mem_req_write = `MEM_WRITE;
+                mem_req_addr  = txn_addr;
+                mem_req_wdata = snoop_data_reg;
             end
             ST_WB_ACK: begin
                 if (wb_owner == 1'b0) c0_wb_ack = 1'b1;
@@ -265,7 +280,12 @@ module mesi_controller #(
                     if ((owner == 1'b0 ? c1_snoop_hit : c0_snoop_hit) &&
                         (owner == 1'b0 ? c1_snoop_state : c0_snoop_state) == `MESI_M) begin
                         fill_data_reg <= owner ? c0_snoop_data : c1_snoop_data;
-                        state <= ST_FILL;
+                        if (txn_type == `MISS_READ) begin
+                            fill_state_reg <= `MESI_S;
+                            state <= ST_SNOOP_WB_REQ;
+                        end else begin
+                            state <= ST_FILL;
+                        end
                     end else if (txn_type == `MISS_UPGRADE && (owner ? c1_snoop_hit : c0_snoop_hit)) begin
                         // L1 retains its own clean line; fill_data is unused by
                         // the L1 for a surviving UPGRADE and its write data wins.
@@ -299,6 +319,12 @@ module mesi_controller #(
 
                 ST_WB_REQ: begin
                     if (mem_req_ready) state <= ST_WB_ACK;
+                end
+
+                // Writes complete on request acceptance; do not grant the
+                // requester Shared until the dirty peer data is safely stored.
+                ST_SNOOP_WB_REQ: begin
+                    if (mem_req_ready) state <= ST_FILL;
                 end
 
                 ST_WB_ACK: begin

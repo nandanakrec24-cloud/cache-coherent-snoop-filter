@@ -21,7 +21,7 @@ The initial memory interface uses a separate one-bit command: `0=READ`, `1=WRITE
 
 ## Transaction rules
 
-- **READ:** obtain the latest data. If the peer has a copy, the requester receives `S`; if no peer copy exists, it receives `E`. If the peer is in `M`, use the peer's `snoop_data`, not stale memory data.
+- **READ:** obtain the latest data. If the peer has a copy, the requester receives `S`; if no peer copy exists, it receives `E`. If the peer is in `M`, capture its `snoop_data`, invalidate the dirty peer, write that data to memory, and only then fill the requester in `S`.
 - **RDX:** invalidate the peer's matching line and grant the requester `M`. If the peer is in `M`, use its snoop data; otherwise read the backing memory.
 - **UPGRADE:** invalidate the peer and grant `M`. If the requester's own Shared line still exists, the cache keeps its copy and applies its pending write. If the requester copy has disappeared, current line data must be obtained before the grant; the integration must verify this race.
 - **Dirty writeback:** send the victim address/data to memory and acknowledge the cache only when the memory accepts the write.
@@ -44,7 +44,8 @@ The controller removes the requested address from the negative filter when it ac
 
 ## Known scope limits
 
-- This module is a transaction sequencer proposal, not yet verified with the real two-cache top level, bus, or memory implementation.
+- The controller and integration bench have been exercised with the L1 implementation at `/tmp/l1_cache.v`; that source is outside this repository and is not included in the project checkout.
+- The integration bench uses an inline behavioral memory process. It does not instantiate a standalone shared-bus module or main-memory module; those standalone modules remain unverified.
 - The filter insertion source must be completed at integration because the submitted L1 interface does not report all clean line evictions.
 - Standalone testbench results must be run and recorded on the project machine; never claim a pass until the simulator prints `PASS`.
 
@@ -52,12 +53,12 @@ The controller removes the requested address from the negative filter when it ac
 
 | Current state | Local operation / observed transaction | Required result | Notes |
 |---|---|---|---|
-| I | Local read miss / READ | E if peer absent; S if peer has a clean copy | If peer is M, source latest data from peer and both become S. |
+| I | Local read miss / READ | E if peer absent; S if peer has a copy | If peer is M, invalidate it, write its latest data to memory, then fill the requester S. |
 | I | Local write miss / RDX | M | Peer copy, if any, is invalidated first; latest data is acquired before write completes. |
 | S | Local write / UPGRADE | M | Invalidate peer copy before granting write permission. |
 | E | Local write hit | M | No bus transaction is needed because this cache was the only clean holder. |
 | M | Local read/write hit | M | This cache owns the latest data. |
-| E or M | Peer read snoop | S | For M, the controller must capture/forward the latest data. |
+| E or M | Peer read snoop | S | E downgrades to S. M is invalidated, written to memory, then the requester is filled S with the captured latest data. |
 | Any valid state | Peer invalidating snoop | I | If the state was M, preserve/forward the dirty data before discarding ownership. |
 | S | Peer read snoop | S | Clean shared copy remains shared. |
 | I | Any snoop | I | No matching line; no state change. |
@@ -69,7 +70,7 @@ This is a protocol summary, not a complete formal transition table for every pos
 | L1 request / event | Peer action | Memory action | Requester result |
 |---|---|---|---|
 | READ, peer absent | Skip only on a trusted negative-filter hit; otherwise read-snoop peer | Read address unless latest data is supplied by peer in M | Fill E when peer absent, S when a peer copy exists |
-| READ, peer in M | Read snoop; peer M→S | No memory read required | Fill latest peer data in S |
+| READ, peer in M | Invalidate peer M→I and capture latest data | Write captured data; no memory read | After write acceptance, fill requester in S |
 | RDX, peer clean | Invalidate peer if present | Read address | Fill M |
 | RDX, peer in M | Invalidate peer and capture its data | No memory read required | Fill latest peer data in M |
 | UPGRADE | Invalidate peer | No memory read if requester copy survives and peer is not M; otherwise acquire current data | Grant M |

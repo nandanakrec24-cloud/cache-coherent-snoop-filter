@@ -54,10 +54,26 @@ module tb_mesi_l1_integration;
     integer i;
     integer errors = 0;
     integer snoop_count = 0;
+    integer mem_read_accept_count = 0;
+    integer mem_write_accept_count = 0;
+    integer c0_wb_ack_count = 0;
+    integer c1_wb_ack_count = 0;
+    integer c0_fill_count = 0;
+    integer c1_fill_count = 0;
 
     always @(posedge clk) begin
-        if (rst_n && (c0_snoop_valid || c1_snoop_valid))
-            snoop_count <= snoop_count + 1;
+        if (rst_n) begin
+            if (c0_snoop_valid || c1_snoop_valid)
+                snoop_count <= snoop_count + 1;
+            if (mem_req_valid && mem_req_ready) begin
+                if (mem_req_write) mem_write_accept_count <= mem_write_accept_count + 1;
+                else                mem_read_accept_count <= mem_read_accept_count + 1;
+            end
+            if (c0_wb_ack) c0_wb_ack_count <= c0_wb_ack_count + 1;
+            if (c1_wb_ack) c1_wb_ack_count <= c1_wb_ack_count + 1;
+            if (c0_fill_valid) c0_fill_count <= c0_fill_count + 1;
+            if (c1_fill_valid) c1_fill_count <= c1_fill_count + 1;
+        end
     end
 
     // Real negative snoop filter
@@ -209,7 +225,7 @@ module tb_mesi_l1_integration;
     end
 
     task check;
-        input [255:0] label;
+        input [1023:0] label;
         input condition;
         begin
             if (condition !== 1'b1) begin
@@ -225,6 +241,7 @@ module tb_mesi_l1_integration;
         input wr;
         input [15:0] addr;
         input [31:0] data;
+        input [31:0] expected_read_data;
         integer t;
         begin
             @(negedge clk);
@@ -253,6 +270,8 @@ module tb_mesi_l1_integration;
                 if (!c0_resp_valid) begin
                     $display("FAIL: Core 0 response timeout");
                     errors = errors + 1;
+                end else if (!wr) begin
+                    check("Core 0 core-visible read data", c0_resp_rdata == expected_read_data);
                 end
             end
         end
@@ -262,6 +281,7 @@ module tb_mesi_l1_integration;
         input wr;
         input [15:0] addr;
         input [31:0] data;
+        input [31:0] expected_read_data;
         integer t;
         begin
             @(negedge clk);
@@ -290,8 +310,198 @@ module tb_mesi_l1_integration;
                 if (!c1_resp_valid) begin
                     $display("FAIL: Core 1 response timeout");
                     errors = errors + 1;
+                end else if (!wr) begin
+                    check("Core 1 core-visible read data", c1_resp_rdata == expected_read_data);
                 end
             end
+        end
+    endtask
+
+    task read_modified_line_with_backpressure;
+        integer t;
+        integer writes_before;
+        integer fills_before;
+        integer ack0_before;
+        integer ack1_before;
+        begin
+            writes_before = mem_write_accept_count;
+            fills_before = c0_fill_count;
+            ack0_before = c0_wb_ack_count;
+            ack1_before = c1_wb_ack_count;
+            @(negedge clk);
+            mem_req_ready = 0;
+            c0_req_valid = 1;
+            c0_req_write = 0;
+            c0_req_addr = 16'h0010;
+            c0_req_wdata = 0;
+            t = 0;
+            while (!c0_req_ready && t < 100) begin @(negedge clk); t = t + 1; end
+            check("M-to-S read request accepted by core", c0_req_ready);
+            if (c0_req_ready) begin
+                @(posedge clk);
+                @(negedge clk); c0_req_valid = 0;
+            end
+
+            t = 0;
+            while (!c1_snoop_valid && t < 100) begin @(negedge clk); t = t + 1; end
+            check("M-to-S asserts snoop to peer", c1_snoop_valid);
+            check("M-to-S invalidates peer only", c1_snoop_invalidate && !c0_snoop_invalidate);
+
+            t = 0;
+            while (!(mem_req_valid && mem_req_write) && t < 100) begin @(negedge clk); t = t + 1; end
+            check("M-to-S dirty write request appears", mem_req_valid && mem_req_write);
+            check("M-to-S writes the snooped address and data",
+                  mem_req_addr == 16'h0010 && mem_req_wdata == 32'hDEADBEEF);
+            check("M owner is invalidated before memory acceptance", c1.state_mem[0] == `MESI_I);
+            repeat (3) begin
+                @(posedge clk); #1;
+                check("M-to-S write remains valid while stalled", mem_req_valid && mem_req_write);
+                check("M-to-S write address remains stable", mem_req_addr == 16'h0010);
+                check("M-to-S write data remains stable", mem_req_wdata == 32'hDEADBEEF);
+                check("M-to-S requester is not filled early", !c0_fill_valid);
+                check("M-to-S has no unrelated writeback acknowledgement", !c0_wb_ack && !c1_wb_ack);
+            end
+
+            @(negedge clk); mem_req_ready = 1;
+            @(posedge clk); #1;
+            check("M-to-S write accepted exactly once", mem_write_accept_count == writes_before + 1);
+            check("M-to-S memory now has latest data", memory[16'h0010] == 32'hDEADBEEF);
+
+            t = 0;
+            while (!c0_resp_valid && t < 100) begin @(negedge clk); t = t + 1; end
+            check("M-to-S core response arrives", c0_resp_valid);
+            if (c0_resp_valid)
+                check("M-to-S core response carries latest data", c0_resp_rdata == 32'hDEADBEEF);
+            check("M-to-S fill is Shared", c0.state_mem[0] == `MESI_S);
+            check("M-to-S fill occurs once", c0_fill_count == fills_before + 1);
+            check("M-to-S does not generate L1 victim ack", c0_wb_ack_count == ack0_before && c1_wb_ack_count == ack1_before);
+            check("M-to-S write does not repeat", mem_write_accept_count == writes_before + 1);
+        end
+    endtask
+
+    task simultaneous_different_line_reads;
+        integer t;
+        integer accepted0;
+        integer accepted1;
+        integer got0;
+        integer got1;
+        integer first_fill_owner;
+        integer fills0_before;
+        integer fills1_before;
+        reg [31:0] response0;
+        reg [31:0] response1;
+        begin
+            accepted0 = 0;
+            accepted1 = 0;
+            got0 = 0;
+            got1 = 0;
+            first_fill_owner = -1;
+            fills0_before = c0_fill_count;
+            fills1_before = c1_fill_count;
+            @(negedge clk);
+            c0_req_valid = 1; c0_req_write = 0; c0_req_addr = 16'h0050; c0_req_wdata = 0;
+            c1_req_valid = 1; c1_req_write = 0; c1_req_addr = 16'h0051; c1_req_wdata = 0;
+            t = 0;
+            while (!(accepted0 && accepted1) && t < 100) begin
+                @(posedge clk);
+                if (c0_req_valid && c0_req_ready) accepted0 = 1;
+                if (c1_req_valid && c1_req_ready) accepted1 = 1;
+                @(negedge clk);
+                if (accepted0) c0_req_valid = 0;
+                if (accepted1) c1_req_valid = 0;
+                t = t + 1;
+            end
+            check("simultaneous different-line core requests accepted", accepted0 && accepted1);
+
+            t = 0;
+            while (first_fill_owner == -1 && t < 150) begin
+                @(negedge clk);
+                if (c0_fill_valid) first_fill_owner = 0;
+                else if (c1_fill_valid) first_fill_owner = 1;
+                t = t + 1;
+            end
+            check("simultaneous misses use controller cache-0 priority", first_fill_owner == 0);
+
+            t = 0;
+            while (!(got0 && got1) && t < 200) begin
+                @(negedge clk);
+                if (c0_resp_valid && !got0) begin got0 = 1; response0 = c0_resp_rdata; end
+                if (c1_resp_valid && !got1) begin got1 = 1; response1 = c1_resp_rdata; end
+                t = t + 1;
+            end
+            check("both simultaneous requests receive responses", got0 && got1);
+            if (got0) check("core 0 gets its requested line data", response0 == memory[16'h0050]);
+            if (got1) check("core 1 gets its requested line data", response1 == memory[16'h0051]);
+            check("core 0 simultaneous miss fills once", c0_fill_count == fills0_before + 1);
+            check("core 1 simultaneous miss fills once", c1_fill_count == fills1_before + 1);
+        end
+    endtask
+
+    task writeback_races_with_request_for_victim;
+        integer t;
+        integer accepted0;
+        integer accepted1;
+        integer got0;
+        integer got1;
+        integer writes_before;
+        integer ack_before;
+        integer fills0_before;
+        reg [31:0] response0;
+        begin
+            writes_before = mem_write_accept_count;
+            ack_before = c1_wb_ack_count;
+            fills0_before = c0_fill_count;
+            accepted0 = 0;
+            accepted1 = 0;
+            got0 = 0;
+            got1 = 0;
+            @(negedge clk);
+            mem_req_ready = 0;
+            c0_req_valid = 1; c0_req_write = 0; c0_req_addr = 16'h0010; c0_req_wdata = 0;
+            c1_req_valid = 1; c1_req_write = 1; c1_req_addr = 16'h0018; c1_req_wdata = 32'h12345678;
+            t = 0;
+            while (!(accepted0 && accepted1) && t < 100) begin
+                @(posedge clk);
+                if (c0_req_valid && c0_req_ready) accepted0 = 1;
+                if (c1_req_valid && c1_req_ready) accepted1 = 1;
+                @(negedge clk);
+                if (accepted0) c0_req_valid = 0;
+                if (accepted1) c1_req_valid = 0;
+                t = t + 1;
+            end
+            check("writeback race core requests accepted", accepted0 && accepted1);
+
+            t = 0;
+            while (!(mem_req_valid && mem_req_write) && t < 100) begin @(negedge clk); t = t + 1; end
+            check("dirty victim writeback appears before competing read snoop", mem_req_valid && mem_req_write && !c0_snoop_valid && !c1_snoop_valid);
+            check("victim writeback carries newest dirty data", mem_req_addr == 16'h0010 && mem_req_wdata == 32'hCAFEBABE);
+            repeat (3) begin
+                @(posedge clk); #1;
+                check("victim write remains valid under backpressure", mem_req_valid && mem_req_write);
+                check("victim write address remains stable", mem_req_addr == 16'h0010);
+                check("victim write data remains stable", mem_req_wdata == 32'hCAFEBABE);
+                check("victim is not acknowledged before memory accepts", !c1_wb_ack);
+                check("competing read is not filled before writeback", !c0_fill_valid);
+            end
+            @(negedge clk); mem_req_ready = 1;
+            @(posedge clk); #1;
+            check("victim write accepted once", mem_write_accept_count == writes_before + 1);
+            check("victim acknowledgement follows acceptance", c1_wb_ack);
+            check("backing memory receives newest victim data", memory[16'h0010] == 32'hCAFEBABE);
+
+            t = 0;
+            while (!(got0 && got1) && t < 200) begin
+                @(negedge clk);
+                if (c0_resp_valid && !got0) begin got0 = 1; response0 = c0_resp_rdata; end
+                if (c1_resp_valid && !got1) got1 = 1;
+                t = t + 1;
+            end
+            check("writeback race completes both core requests", got0 && got1);
+            if (got0) check("competing read receives newest victim data", response0 == 32'hCAFEBABE);
+            check("competing read fills once", c0_fill_count == fills0_before + 1);
+            check("writeback acknowledged exactly once", c1_wb_ack_count == ack_before + 1);
+            check("victim data written exactly once", mem_write_accept_count == writes_before + 1);
+            check("requester owns replacement line in M", c1.state_mem[0] == `MESI_M);
         end
     endtask
 
@@ -311,7 +521,7 @@ module tb_mesi_l1_integration;
         known_absent_insert_valid = 0;
 
         // Test 0: A valid negative-filter hit must bypass the peer snoop.
-        access0(0, 16'h0021, 0);
+        access0(0, 16'h0021, 0, 32'h10000021);
         check("Filter-hit read returns correct memory data",
               c0.data_mem[1] == 32'h10000021);
         check("Filter-hit read receives Exclusive state",
@@ -320,19 +530,19 @@ module tb_mesi_l1_integration;
               snoop_count == 0);
 
         // Test 1: Core 0 reads an uncached line.
-        access0(0, 16'h0010, 0);
+        access0(0, 16'h0010, 0, 32'h10000010);
         check("Core 0 initial read data",
               c0.data_mem[16'h0010 & 16'h0007] == 32'h10000010);
         check("Core 0 initial state is E",
               c0.state_mem[16'h0010 & 16'h0007] == `MESI_E);
 
         // Test 2: Core 1 reads the same line; both must become S.
-        access1(0, 16'h0010, 0);
+        access1(0, 16'h0010, 0, 32'h10000010);
         check("Core 0 downgraded to S", c0.state_mem[0] == `MESI_S);
         check("Core 1 holds S", c1.state_mem[0] == `MESI_S);
 
         // Test 3: Core 1 writes the shared line.
-        access1(1, 16'h0010, 32'hDEADBEEF);
+        access1(1, 16'h0010, 32'hDEADBEEF, 0);
         check("Core 0 invalidated after upgrade",
               c0.state_mem[0] == `MESI_I);
         check("Core 1 owns modified line",
@@ -340,20 +550,23 @@ module tb_mesi_l1_integration;
         check("Core 1 stored new data",
               c1.data_mem[0] == 32'hDEADBEEF);
 
-        // Test 4: Core 0 reads the modified line from Core 1.
-        access0(0, 16'h0010, 0);
+        // Test 4: A READ of peer M writes back dirty data before filling S.
+        read_modified_line_with_backpressure;
         check("Core 0 receives latest modified data",
               c0.data_mem[0] == 32'hDEADBEEF);
         check("Core 0 becomes Shared", c0.state_mem[0] == `MESI_S);
-        check("Core 1 downgrades to Shared", c1.state_mem[0] == `MESI_S);
+        check("Core 1 dirty owner is invalidated", c1.state_mem[0] == `MESI_I);
 
-        // Test 5: Dirty victim writeback during replacement.
-        access1(1, 16'h0010, 32'hCAFEBABE);
-        access1(1, 16'h0018, 32'h12345678);
-        check("Dirty victim written to backing memory",
-              memory[16'h0010] == 32'hCAFEBABE);
-        check("Replacement line becomes Modified",
-              c1.state_mem[0] == `MESI_M);
+        // Create a dirty victim, then race its eviction against another
+        // core's read of that same address. The controller must serialize the
+        // writeback before snooping/filling the competing read.
+        access1(1, 16'h0010, 32'hCAFEBABE, 0);
+        writeback_races_with_request_for_victim;
+        check("replacement line becomes Modified", c1.state_mem[0] == `MESI_M);
+
+        // Different-line misses presented together are serialized with cache 0
+        // priority. Both core-visible responses must complete with own data.
+        simultaneous_different_line_reads;
 
         if (errors == 0)
             $display("PASS: all two-L1 MESI integration checks passed");
