@@ -145,7 +145,7 @@ module tb_mesi_controller;
     endtask
 
     initial begin
-        $dumpfile("build/mesi_controller.vcd");
+        $dumpfile("/tmp/mesi_controller.vcd");
         $dumpvars(0, tb_mesi_controller);
         repeat (2) @(negedge clk);
         rst_n = 1;

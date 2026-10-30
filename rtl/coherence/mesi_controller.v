@@ -102,7 +102,6 @@ module mesi_controller #(
     reg       wb_owner;
     reg [ADDR_WIDTH-1:0] wb_addr_reg;
     reg [DATA_WIDTH-1:0] wb_data_reg;
-    reg       requester_still_has_line;
 
     wire choose_c0 = c0_miss_valid && !c1_miss_valid;
     wire choose_c1 = c1_miss_valid && !c0_miss_valid;
@@ -216,7 +215,6 @@ module mesi_controller #(
             wb_owner <= 1'b0;
             wb_addr_reg <= {ADDR_WIDTH{1'b0}};
             wb_data_reg <= {DATA_WIDTH{1'b0}};
-            requester_still_has_line <= 1'b0;
         end else begin
             case (state)
                 ST_IDLE: begin
@@ -234,7 +232,6 @@ module mesi_controller #(
                         snoop_was_hit <= 1'b0;
                         snoop_old_state <= `MESI_I;
                         snoop_data_reg <= {DATA_WIDTH{1'b0}};
-                        requester_still_has_line <= 1'b0; // sampled after txn_addr is registered in ST_SNOOP
                         // A filter hit is safe only for addresses known absent.
                         need_snoop <= (selected_type == `MISS_UPGRADE) ? 1'b1 : !filter_hit;
                         if ((selected_type != `MISS_UPGRADE) && filter_hit)
@@ -267,7 +264,9 @@ module mesi_controller #(
 
                     // For READ, any peer copy means Shared. For RDX, the peer
                     // is invalidated. For UPGRADE, keep the requester's copy if
-                    // present; if it vanished, fetch current data before grant.
+                    // present; the requester's snoop_hit is a combinational
+                    // presence probe even though snoop_valid targets only the
+                    // peer. If absent, fetch current data before granting M.
                     if (txn_type == `MISS_READ) begin
                         if ((owner == 1'b0 ? c1_snoop_hit : c0_snoop_hit))
                             fill_state_reg <= `MESI_S;

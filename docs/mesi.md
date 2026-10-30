@@ -23,7 +23,7 @@ The initial memory interface uses a separate one-bit command: `0=READ`, `1=WRITE
 
 - **READ:** obtain the latest data. If the peer has a copy, the requester receives `S`; if no peer copy exists, it receives `E`. If the peer is in `M`, capture its `snoop_data`, invalidate the dirty peer, write that data to memory, and only then fill the requester in `S`.
 - **RDX:** invalidate the peer's matching line and grant the requester `M`. If the peer is in `M`, use its snoop data; otherwise read the backing memory.
-- **UPGRADE:** invalidate the peer and grant `M`. If the requester's own Shared line still exists, the cache keeps its copy and applies its pending write. If the requester copy has disappeared, current line data must be obtained before the grant; the integration must verify this race.
+- **UPGRADE:** invalidate the peer and grant `M`. The L1 contract is that a cache raises UPGRADE only after accepting a write hit in `S`, latches the request, and retains that line while waiting in its miss state; it does not accept a second core request until fill. The controller also verifies requester presence from that cache's combinational `snoop_hit` for the transaction address (the signal is valid as an observation even when that cache's `snoop_valid` is low). If presence is absent, the controller fetches current data before granting `M`; it never treats an absent line as a valid retained copy.
 - **Dirty writeback:** send the victim address/data to memory and acknowledge the cache only when the memory accepts the write.
 - **Serialization:** this baseline allows one active controller transaction. Dirty writebacks are serviced before a new miss.
 
@@ -38,13 +38,14 @@ The controller removes the requested address from the negative filter when it ac
 1. `mem_req_ready` accepts both read and write commands on the active clock edge.
 2. Writes complete on request acceptance and do not require `mem_resp_valid`; reads complete later with `mem_resp_valid` and `mem_resp_rdata`.
 3. `snoop_hit`, `snoop_state`, and `snoop_data` are combinational observations of `snoop_addr`; the target cache updates state on the edge where its `snoop_valid` is asserted.
-4. A cache's `fill_valid` pulse is not asserted in the same cycle as `snoop_valid` to that same cache.
-5. The top level connects the filter's `filter_hit` to the address on `filter_query_addr` and applies remove/insert outputs at the specified clock edge.
-6. Simultaneous misses are serialized. This baseline uses cache 0 priority if both miss-valid inputs rise together; a fair arbitration policy can replace this if the team requires round-robin.
+4. For UPGRADE, the requesting L1 holds its accepted Shared line and latched write until fill. The controller samples the requester's combinational `snoop_hit` while it snoops the peer; a missing requester hit follows the memory-read recovery path. The controller must not assume that every UPGRADE has a surviving line without checking this observation.
+5. A cache's `fill_valid` pulse is not asserted in the same cycle as `snoop_valid` to that same cache.
+6. The top level connects the filter's `filter_hit` to the address on `filter_query_addr` and applies remove/insert outputs at the specified clock edge.
+7. Simultaneous misses are serialized. This baseline uses cache 0 priority if both miss-valid inputs rise together; a fair arbitration policy can replace this if the team requires round-robin.
 
 ## Known scope limits
 
-- The controller and integration bench have been exercised with the L1 implementation at `/tmp/l1_cache.v`; that source is outside this repository and is not included in the project checkout.
+- L1 RTL is included at `rtl/cache/l1_cache.v`, recovered from repository history. The earlier review environment's `/tmp/l1_cache.v` and `.bak` were not available in this checkout, so identity with that external source cannot be established here.
 - The integration bench uses an inline behavioral memory process. It does not instantiate a standalone shared-bus module or main-memory module; those standalone modules remain unverified.
 - The filter insertion source must be completed at integration because the submitted L1 interface does not report all clean line evictions.
 - Standalone testbench results must be run and recorded on the project machine; never claim a pass until the simulator prints `PASS`.

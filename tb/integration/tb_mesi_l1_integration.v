@@ -317,6 +317,46 @@ module tb_mesi_l1_integration;
         end
     endtask
 
+    task upgrade_shared_line;
+        integer t;
+        integer reads_before;
+        begin
+            reads_before = mem_read_accept_count;
+            @(negedge clk);
+            c1_req_valid = 1;
+            c1_req_write = 1;
+            c1_req_addr = 16'h0010;
+            c1_req_wdata = 32'hDEADBEEF;
+            t = 0;
+            while (!c1_req_ready && t < 100) begin @(negedge clk); t = t + 1; end
+            check("Shared-line write request accepted", c1_req_ready);
+            if (c1_req_ready) begin
+                @(posedge clk);
+                @(negedge clk);
+                c1_req_valid = 0;
+            end
+
+            check("Shared write generates MISS_UPGRADE",
+                  c1_miss_valid && c1_miss_type == `MISS_UPGRADE);
+            check("requester retains S while UPGRADE is pending",
+                  c1.state_mem[0] == `MESI_S);
+            t = 0;
+            while (!c0_snoop_valid && t < 100) begin @(negedge clk); t = t + 1; end
+            check("UPGRADE snoops the peer", c0_snoop_valid && c0_snoop_invalidate);
+            check("requester still has Shared copy at peer snoop",
+                  c1_snoop_hit && c1_snoop_state == `MESI_S && c1.state_mem[0] == `MESI_S);
+
+            t = 0;
+            while (!c1_resp_valid && t < 100) begin @(negedge clk); t = t + 1; end
+            check("UPGRADE write completes", c1_resp_valid);
+            check("UPGRADE does not read memory for retained line",
+                  mem_read_accept_count == reads_before);
+            check("UPGRADE invalidates peer and grants M",
+                  c0.state_mem[0] == `MESI_I && c1.state_mem[0] == `MESI_M);
+            check("UPGRADE applies pending write data", c1.data_mem[0] == 32'hDEADBEEF);
+        end
+    endtask
+
     task read_modified_line_with_backpressure;
         integer t;
         integer writes_before;
@@ -542,7 +582,7 @@ module tb_mesi_l1_integration;
         check("Core 1 holds S", c1.state_mem[0] == `MESI_S);
 
         // Test 3: Core 1 writes the shared line.
-        access1(1, 16'h0010, 32'hDEADBEEF, 0);
+        upgrade_shared_line;
         check("Core 0 invalidated after upgrade",
               c0.state_mem[0] == `MESI_I);
         check("Core 1 owns modified line",
