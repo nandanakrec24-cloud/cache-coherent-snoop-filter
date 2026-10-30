@@ -12,16 +12,20 @@
 - `FILTER_ENTRIES=0` always misses and always requires snoop.
 - Reset clears all valid bits.
 
-## Integration tests — planned
+## Integration tests — current bench coverage
 
-- Core 0 read, then Core 1 read of same address (clean sharing).
-- Core 0 write after both cores hold shared copies (invalidation).
-- Core 1 reads a line modified by Core 0 (writeback/forwarding path).
-- Two cores request the same address in adjacent cycles.
-- Dirty line eviction and memory consistency.
-- Filter hit skips a remote snoop only when the address is truly absent from both caches.
-- Filter miss performs the normal snoop path.
-- Repeat all coherence scenarios with filter disabled and with small filter capacity.
+- Core-visible reads, clean sharing, and upgrade invalidation.
+- UPGRADE contract: verify the L1 raises `MISS_UPGRADE` for an accepted write hit in S, retains the requester S line through the peer snoop until fill, the peer is invalidated, and no memory read is issued for the retained line.
+- READ of peer M with delayed dirty-data write acceptance before requester fill.
+- Dirty victim writeback under backpressure while the other core requests that victim address.
+- Simultaneous different-line requests; verify fixed cache-0 priority, both responses, and per-core data.
+- Snoop-filter hit on a known absent address.
+
+The integration bench directly instantiates `mesi_controller`, `snoop_filter`, and two `l1_cache` modules; its backing memory is inline testbench logic. The tracked L1 was recovered from repository history (commit `ec6b950`). The previous external `/tmp/l1_cache.v` files were absent when this revision was prepared, so identity with the source used in the earlier reported run remains unknown. There is no standalone shared-bus or main-memory module in the integration run; those blocks remain unverified. See [the integration README](../tb/integration/README.md) for reproducible commands.
+
+The controller unit test passed with checks for read-request backpressure, M-to-S dirty-write backpressure, stable memory request payloads, and exactly-once write/fill behavior. The snoop-filter unit test passed with `FILTER_ENTRIES=0`, `4`, and `16`.
+
+Still planned: same-address adjacent-cycle requests, all coherence scenarios with `FILTER_ENTRIES=0` and other capacities, standalone shared-bus and main-memory verification.
 
 ## Evidence
 

@@ -85,7 +85,7 @@ module tb_snoop_filter;
     endtask
 
     initial begin
-        $dumpfile("build/snoop_filter.vcd");
+        $dumpfile("/tmp/snoop_filter.vcd");
         $dumpvars(0, tb_snoop_filter);
         $display("Starting snoop_filter tests; FILTER_ENTRIES=%0d", FILTER_ENTRIES);
 
