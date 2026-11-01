@@ -33,7 +33,7 @@ The testbench pretends to be both the **core** and the **coherence controller**:
 
 - A fake memory (`mem`) starts with `mem[a] = {16'hA5A5, a}`, so every address has a recognizable value.
 - A fake controller answers miss requests after 3 cycles, using the state set in `next_fill_state`.
-  It accepts writebacks in 1 cycle.
+  It accepts writebacks after `wb_delay` extra cycles and fails the test if the writeback request changes while waiting.
 - The tasks `core_access(write, addr, wdata, rdata)` and `snoop(addr, invalidate)` drive the cache.
 
 ### What is checked
@@ -52,5 +52,7 @@ The testbench pretends to be both the **core** and the **coherence controller**:
 | 10 | Snoop to an absent address reports no hit and changes nothing |
 | 11 | Race: the line is invalidated while an UPGRADE is waiting; it still ends in M with the right data |
 | 12 | The core is stalled (`core_req_ready = 0`) while a snoop is active |
+| 13 | Delayed `wb_ack` (5 extra cycles): writeback address/data stay stable, refill waits |
+| 14 | Snoop hits the dirty victim during `F_WB`: reports M + latest data, writeback still carries it |
 
 A 20 µs timeout catches any handshake that hangs.

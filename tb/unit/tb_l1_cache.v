@@ -71,6 +71,11 @@ module tb_l1_cache;
     reg  [15:0] last_wb_addr;
     reg  [31:0] last_wb_data;
     integer     errors = 0;
+    integer     wb_delay = 0;      // extra cycles before wb_ack
+    integer     wb_wait_cnt = 0;
+    reg         wb_waiting = 1'b0;
+    reg  [15:0] wb_first_addr;
+    reg  [31:0] wb_first_data;
     integer     k;
 
     initial for (k = 0; k < 65536; k = k + 1) mem[k] = {16'hA5A5, k[15:0]};
@@ -95,13 +100,28 @@ module tb_l1_cache;
             end
         end
 
-        // Writeback: accept in one cycle
+        // Writeback: accept after wb_delay extra cycles (0 = next cycle).
+        // While waiting, the request must stay stable.
         if (wb_req_valid && !wb_ack) begin
-            mem[wb_req_addr] <= wb_req_data;
-            wb_ack           <= 1'b1;
-            wb_count         = wb_count + 1;
-            last_wb_addr     <= wb_req_addr;
-            last_wb_data     <= wb_req_data;
+            if (!wb_waiting) begin
+                wb_waiting = 1'b1;
+                wb_wait_cnt = wb_delay;
+                wb_first_addr = wb_req_addr;
+                wb_first_data = wb_req_data;
+            end else if (wb_req_addr !== wb_first_addr || wb_req_data !== wb_first_data) begin
+                $display("FAIL wb request changed while waiting for wb_ack");
+                errors = errors + 1;
+            end
+            if (wb_wait_cnt == 0) begin
+                mem[wb_req_addr] <= wb_req_data;
+                wb_ack           <= 1'b1;
+                wb_count         = wb_count + 1;
+                last_wb_addr     <= wb_req_addr;
+                last_wb_data     <= wb_req_data;
+                wb_waiting       = 1'b0;
+            end else begin
+                wb_wait_cnt = wb_wait_cnt - 1;
+            end
         end
     end
 
@@ -268,6 +288,48 @@ module tb_l1_cache;
         #1;
         expect_eq("T12 ready low", core_req_ready, 0);
         @(negedge clk); snoop_valid = 1'b0;
+
+        // 13. Delayed wb_ack: request must stay stable for several cycles,
+        //     the cache must keep waiting, and the refill happens only after.
+        //     Setup: index 3 holds a dirty line (0x0043).
+        next_fill_state = ST_E;
+        core_access(1, 16'h0043, 32'h55555555, rd);
+        expect_eq("T13 setup M", dut.state_mem[3], ST_M);
+        wb_delay = 5;
+        w0 = wb_count;
+        core_access(0, 16'h004B, 0, rd);            // same index 3 -> evicts 0x0043
+        expect_eq("T13 wb count", wb_count - w0, 1);
+        expect_eq("T13 wb addr",  last_wb_addr, 16'h0043);
+        expect_eq("T13 wb data",  last_wb_data, 32'h55555555);
+        expect_eq("T13 mem",      mem[16'h0043], 32'h55555555);
+        expect_eq("T13 new data", rd, 32'hA5A5004B);
+
+        // 14. Snoop hits the dirty victim while the cache waits in F_WB.
+        //     The snoop must see M with the latest data, the writeback must
+        //     still carry that same data, and the line ends in I/refilled.
+        core_access(1, 16'h0054, 32'h66666666, rd);   // index 4, M
+        expect_eq("T14 setup M", dut.state_mem[4], ST_M);
+        wb_delay = 6;
+        w0 = wb_count;
+        fork
+            core_access(0, 16'h005C, 0, rd);          // same index 4 -> evict 0x0054
+            begin
+                wait (wb_req_valid);
+                @(negedge clk);
+                snoop_addr = 16'h0054; snoop_invalidate = 1'b1; snoop_valid = 1'b1;
+                #1;
+                expect_eq("T14 snoop hit",   snoop_hit, 1);
+                expect_eq("T14 snoop state", snoop_state, ST_M);
+                expect_eq("T14 snoop data",  snoop_data, 32'h66666666);
+                @(negedge clk); snoop_valid = 1'b0; snoop_invalidate = 1'b0;
+                expect_eq("T14 wb still pending", wb_req_valid, 1);
+                expect_eq("T14 wb data kept",     wb_req_data, 32'h66666666);
+            end
+        join
+        expect_eq("T14 wb count", wb_count - w0, 1);
+        expect_eq("T14 mem",      mem[16'h0054], 32'h66666666);
+        expect_eq("T14 refill",   rd, 32'hA5A5005C);
+        wb_delay = 0;
 
         if (errors == 0) begin
             $display("PASS: all l1_cache checks passed");
