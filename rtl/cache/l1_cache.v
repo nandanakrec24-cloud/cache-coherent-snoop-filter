@@ -87,6 +87,8 @@ module l1_cache #(
     wire [INDEX_BITS-1:0] s_index = snoop_addr[INDEX_BITS-1:0];
     wire [TAG_BITS-1:0]   s_tag   = snoop_addr[ADDR_WIDTH-1:INDEX_BITS];
 
+    // Presence is observable combinationally even when snoop_valid is low.
+    // The controller uses this for an UPGRADE requester-presence check.
     assign snoop_hit   = (state_mem[s_index] != ST_I) && (tag_mem[s_index] == s_tag);
     assign snoop_state = snoop_hit ? state_mem[s_index] : ST_I;
     assign snoop_data  = data_mem[s_index];
@@ -145,6 +147,8 @@ module l1_cache #(
                                 core_resp_valid <= 1'b1;
                             end else if (c_state == ST_S) begin
                                 // Write hit in S: other copies must be invalidated first
+                                // The S line remains resident while F_MISS is active;
+                                // core_req_ready is low until fill_valid returns.
                                 r_type <= REQ_UPGRADE;
                                 fsm    <= F_MISS;
                             end else begin
